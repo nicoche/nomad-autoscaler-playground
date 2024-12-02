@@ -32,3 +32,4 @@ go run main.go
 * Prometheus GUI: http://localhost:9090
 * Create/update nomad job: nomad job run job.hcl
 * Nomad GUI: http://localhost:4646
+* Set metrics: curl 'http://localhost:8090/set?cpu=50&scaletozero=1'

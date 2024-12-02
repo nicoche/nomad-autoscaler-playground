@@ -9,83 +9,67 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var pingCounter = prometheus.NewCounter(
-	prometheus.CounterOpts{
-		Name: "ping_request_count",
-		Help: "No of request handled by Ping handler",
-	},
-)
-
-var cpuUsage = prometheus.NewGauge(
-	prometheus.GaugeOpts{
-		Name: "cpu",
-		Help: "CPU utilization",
-	},
-)
-
-var reqPerSecond = prometheus.NewGauge(
-	prometheus.GaugeOpts{
-		Name: "reqpersecond",
-		Help: "Requests per second",
-	},
-)
-
-var scaleToZero = prometheus.NewGauge(
-	prometheus.GaugeOpts{
-		Name: "scaletozero",
-		Help: "0 if wanting to scale to zero otherwise 1 to not scale to zero",
-	},
-)
-
-func ping(w http.ResponseWriter, req *http.Request) {
-	pingCounter.Inc()
-	fmt.Fprintf(w, "pong")
-}
+var gauges map[string]prometheus.Gauge
 
 func set(w http.ResponseWriter, req *http.Request) {
-	metric := req.URL.Query().Get("metric")
-	value := req.URL.Query().Get("value")
-
-	if metric == "" || value == "" {
-		fmt.Fprintf(w, "metric and value both need to be set\n")
+	if len(req.URL.Query()) == 0 {
+		fmt.Fprintf(w, "metrics should be provided as query parameters (e.g. /set?cpu=50)\n")
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	// string to int
-	valueInt, err := strconv.Atoi(value)
-	if err != nil {
-		fmt.Fprintf(w, "value must be an integer\n")
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
+	for name, value := range req.URL.Query() {
+		if name == "" || len(value) != 1 || value[0] == "" {
+			fmt.Fprintf(w, "metrics name and value should both be set\n")
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+
+		// string to int
+		value, err := strconv.Atoi(value[0])
+		if err != nil {
+			fmt.Fprintf(w, "value must be an integer\n")
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+
+		err = setMetric(name, float64(value))
+		if err != nil {
+			fmt.Fprintf(w, "could not set metric %s: %s", name, err)
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		fmt.Fprintf(w, "metric %s set at %d\n", name, value)
+	}
+}
+
+func setMetric(name string, value float64) error {
+	metric, ok := gauges[name]
+	if !ok {
+		metric = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: name,
+				Help: fmt.Sprintf("Dynamically created %s", name),
+			},
+		)
+		err := prometheus.Register(metric)
+		if err != nil {
+			return err
+		}
+
+		gauges[name] = metric
 	}
 
-	switch metric {
-	case "scaletozero":
-		scaleToZero.Set(float64(valueInt))
-	case "cpu":
-		cpuUsage.Set(float64(valueInt))
-	case "reqpersecond":
-		reqPerSecond.Set(float64(valueInt))
-	default:
-		fmt.Fprintf(w, "metric query param must be 'cpu' or 'scaletozero' or 'reqpersecond'\n")
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-
-	fmt.Fprintf(w, "metric %s set at %d\n", metric, valueInt)
+	metric.Set(value)
+	return nil
 }
 
 func main() {
-	prometheus.MustRegister(pingCounter)
-	prometheus.MustRegister(cpuUsage)
-	prometheus.MustRegister(reqPerSecond)
-	prometheus.MustRegister(scaleToZero)
+	gauges = map[string]prometheus.Gauge{}
 
 	fmt.Println("Endpoints:")
 	fmt.Println("/set (query param 'name' and 'value') -> set a metric at value given")
 	fmt.Println("/metrics -> dump metrics")
-	http.HandleFunc("/ping", ping)
 	http.HandleFunc("/set", set)
 	http.Handle("/metrics", promhttp.Handler())
 	fmt.Println("Listening on :8090...")
