@@ -64,13 +64,42 @@ func setMetric(name string, value float64) error {
 	return nil
 }
 
+func unset(w http.ResponseWriter, req *http.Request) {
+	if len(req.URL.Query()) == 0 {
+		fmt.Fprintf(w, "metrics should be provided as query parameters (e.g. /unset?cpu)\n")
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	for name := range req.URL.Query() {
+		if name == "" {
+			fmt.Fprintf(w, "metrics name should be set\n")
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+
+		unsetMetric(name)
+		fmt.Fprintf(w, "unset metric %s\n", name)
+	}
+}
+
+func unsetMetric(name string) {
+	metric, ok := gauges[name]
+	if ok {
+		delete(gauges, name)
+		prometheus.Unregister(metric)
+	}
+}
+
 func main() {
 	gauges = map[string]prometheus.Gauge{}
 
 	fmt.Println("Endpoints:")
-	fmt.Println("/set (query param 'name' and 'value') -> set a metric at value given")
+	fmt.Println("/set -> register one or more metrics. Example: /set?cpu=55&memory=1200")
+	fmt.Println("/unset -> unregister one or more metrics. Example: /unset?cpu&memory")
 	fmt.Println("/metrics -> dump metrics")
 	http.HandleFunc("/set", set)
+	http.HandleFunc("/unset", unset)
 	http.Handle("/metrics", promhttp.Handler())
 	fmt.Println("Listening on :8090...")
 	_ = http.ListenAndServe(":8090", nil)
